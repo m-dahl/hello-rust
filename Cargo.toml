@@ -1,0 +1,9 @@
+[package]
+name = "hello-rust"
+version = "0.1.0"
+authors = ["Martin Dahl <martin.dahl@gmail.com>"]
+edition = "2018"
+
+[dependencies]
+ferris-says = "0.1"
+uuid = { version = "0.7", features = ["serde", "v4"] }
