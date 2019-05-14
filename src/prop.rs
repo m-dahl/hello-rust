@@ -1,7 +1,7 @@
 extern crate std;
 use uuid::Uuid;
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum Prop {
     AND(Vec<Prop>),
     OR(Vec<Prop>),
@@ -11,7 +11,7 @@ pub enum Prop {
     FALSE,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum StateEval {
     ID(Uuid),
     LIT(bool),
