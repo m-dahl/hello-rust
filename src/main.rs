@@ -8,6 +8,7 @@ mod eval;
 mod parse;
 mod prop;
 mod state;
+mod test;
 
 use eval::eval;
 use parse::parse;
