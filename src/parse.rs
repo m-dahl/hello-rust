@@ -1,49 +1,56 @@
 use crate::prop::Prop::*;
-use crate::prop::StateEval::*;
 use crate::prop::*;
 use uuid::Uuid;
 
 named!(parse_true<&str, Prop>, map!(tag_no_case!("true"), |_| TRUE));
 named!(parse_false<&str, Prop>, map!(tag_no_case!("false"), |_| FALSE));
+named!(parse_id<&str, Prop>, complete!(map_res!(take_s!(36), |s| Uuid::parse_str(s).map(|id| ID(id)))));
+named!(parse_not<&str, Prop>, do_parse!(ws!(tag!("!")) >> p: parse_p1 >> (NOT(Box::new(p)))));
+named!(parse_parens<&str, Prop>, delimited!(ws!(tag!("(")), ws!(parse_prop), tag!(")")));
 
-named!(parse_state_eval<&str, StateEval>, alt_complete!(parse_id | parse_lit));
-named!(parse_id<&str, StateEval>, complete!(map_res!(take_s!(36), |s| Uuid::parse_str(s).map(|id| ID(id)))));
-named!(parse_lit_true<&str, StateEval>, map!(tag_no_case!("true"), |_| LIT(true)));
-named!(parse_lit_false<&str, StateEval>, map!(tag_no_case!("false"), |_| LIT(false)));
-//named!(parse_lit<&str, StateEval>, map!(parse_to!(bool), |b| LIT(b)));
-named!(parse_lit<&str, StateEval>, alt!(parse_lit_true | parse_lit_false));
-
-named!(parse_factor<&str, Prop>, alt_complete!(
-    parse_eq | parse_true | parse_false));
-
-named!(parse_prop<&str, Prop>, alt_complete!(
-    parse_and    |
-    parse_or     |
-    parse_not    |
-    parse_factor
-)
+// precedence levels: || lowest, && mid, comparison greater, variables, literals, and negation highest
+named!(parse_prop<&str, Prop>,
+       do_parse!(
+           p: parse_p1 >>
+           op: many0!(tuple!(complete!(ws!(tag!("||"))), parse_p1)) >>
+           (make_binary_prop(p, op)))
 );
 
-named!(parse_eq<&str, Prop>,
-       do_parse!(s1: parse_state_eval >> ws!(tag!("==")) >> s2: parse_state_eval >> (EQ(s1, s2)))
+named!(parse_p1<&str, Prop>,
+       do_parse!(
+           p: parse_p2 >>
+           op: many0!(tuple!(complete!(ws!(tag!("&&"))), parse_p2)) >>
+           (make_binary_prop(p, op)))
 );
 
-named!(parse_and<&str, Prop>,
-       do_parse!(p1: parse_factor >> ws!(tag!("&&")) >> p2: parse_factor >> (AND(vec![p1, p2])))
+named!(parse_p2<&str, Prop>,
+       do_parse!(
+           p: parse_p3 >>
+           op: many0!(tuple!(complete!(ws!(tag!("=="))), parse_p3)) >>
+           (make_binary_prop(p, op)))
 );
 
-named!(parse_or<&str, Prop>,
-       do_parse!(p1: parse_factor >> ws!(tag!("||")) >> p2: parse_factor >> (OR(vec![p1, p2])))
-);
+named!(parse_p3<&str, Prop>, alt_complete!(
+    parse_id | parse_parens | parse_true | parse_false | parse_not
+));
 
-named!(parse_not<&str, Prop>,
-       do_parse!(ws!(tag!("!")) >> p: parse_factor >> (NOT(Box::new(p))))
-);
-
-pub fn parse(s: &str) -> Prop {
-    parse_prop(s).unwrap().1
+fn make_binary_prop(p: Prop, op: Vec<(&str, Prop)>) -> Prop {
+    op.into_iter().fold(p, |acc, val| parse_op(val, acc))
 }
 
+fn parse_op(tup: (&str, Prop), p1: Prop) -> Prop {
+    let (op, p2) = tup;
+    match op {
+        "&&" => AND(Box::new(p1), Box::new(p2)),
+        "||" => OR(Box::new(p1), Box::new(p2)),
+        "==" => EQ(Box::new(p1), Box::new(p2)),
+        _ => panic!("Unknown Operation"),
+    }
+}
+
+pub fn parse(s: &str) -> Prop {
+    parse_p1(s).unwrap().1
+}
 
 #[cfg(test)]
 mod tests {
@@ -62,28 +69,8 @@ mod tests {
         assert_eq!(parse_false("false"), Ok(("", FALSE)));
         assert_ne!(parse_false("TRUE"), Ok(("", FALSE)));
 
-        assert_eq!(
-            parse_and("TRUE  && FALSE"),
-            Ok(("", AND(vec![TRUE, FALSE])))
-        );
-        assert_eq!(parse_or("TRUE||  FALSE"), Ok(("", OR(vec![TRUE, FALSE]))));
-
         assert_eq!(parse_id(id_str), Ok(("", ID(id))));
-
-        assert_eq!(parse_lit("false"), Ok(("", LIT(false))));
-        assert_eq!(parse_state_eval("false"), Ok(("", LIT(false))));
-
-        let s = &format!("true ==  false");
-        assert_eq!(parse_eq(s), Ok(("", EQ(LIT(true), LIT(false)))));
-
-        let s = &format!("true ==  true && false == false");
-        assert_eq!(
-            parse_and(s),
-            Ok((
-                "",
-                AND(vec![EQ(LIT(true), LIT(true)), EQ(LIT(false), LIT(false))])
-            ))
-        );
+        assert_eq!(parse_parens("(false)"), Ok(("", FALSE)));
     }
 
     #[test]
@@ -95,31 +82,60 @@ mod tests {
         assert_eq!(parse_prop("FALSE"), Ok(("", FALSE)));
 
         assert_eq!(
-            parse_prop("TRUE  && FALSE"),
-            Ok(("", AND(vec![TRUE, FALSE])))
+            parse_prop("TRUE&&FALSE&&FALSE"),
+            Ok((
+                "",
+                AND(
+                    Box::new(AND(Box::new(TRUE), Box::new(FALSE))),
+                    Box::new(FALSE)
+                )
+            ))
         );
-        assert_eq!(parse_prop("TRUE||  FALSE"), Ok(("", OR(vec![TRUE, FALSE]))));
+
+        assert_eq!(
+            parse_prop("TRUE && FALSE ||    !FALSE"),
+            Ok((
+                "",
+                OR(
+                    Box::new(AND(Box::new(TRUE), Box::new(FALSE))),
+                    Box::new(NOT(Box::new(FALSE)))
+                )
+            ))
+        );
+        assert_eq!(
+            parse_prop("TRUE||  FALSE"),
+            Ok(("", OR(Box::new(TRUE), Box::new(FALSE))))
+        );
         assert_eq!(parse_prop("! TRUE"), Ok(("", NOT(Box::new(TRUE)))));
 
-        let s = &format!("{} == false", id_str);
-        assert_eq!(parse_prop(s), Ok(("", EQ(ID(id), LIT(false)))));
-
-        let s = &format!("! {} == false", id_str);
+        let s = &format!("! ({} == false)", id_str);
         assert_eq!(
             parse_prop(s),
-            Ok(("", NOT(Box::new(EQ(ID(id), LIT(false))))))
+            Ok(("", NOT(Box::new(EQ(Box::new(ID(id)), Box::new(FALSE))))))
         );
 
-        let s = &format!("TRUE || {} == false", id_str);
+        let s = &format!("TRUE || ({} == false)", id_str);
         assert_eq!(
             parse_prop(s),
-            Ok(("", OR(vec![TRUE, EQ(ID(id), LIT(false))])))
+            Ok((
+                "",
+                OR(
+                    Box::new(TRUE),
+                    Box::new(EQ(Box::new(ID(id)), Box::new(FALSE)))
+                )
+            ))
         );
 
         let s = &format!("{} == false || TRUE", id_str);
         assert_eq!(
             parse_prop(s),
-            Ok(("", OR(vec![EQ(ID(id), LIT(false)), TRUE])))
+            Ok((
+                "",
+                OR(
+                    Box::new(EQ(Box::new(ID(id)), Box::new(FALSE))),
+                    Box::new(TRUE)
+                )
+            ))
         );
     }
 

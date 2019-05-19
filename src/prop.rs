@@ -3,16 +3,11 @@ use uuid::Uuid;
 
 #[derive(Debug, PartialEq)]
 pub enum Prop {
-    AND(Vec<Prop>),
-    OR(Vec<Prop>),
+    AND(Box<Prop>,Box<Prop>),
+    OR(Box<Prop>,Box<Prop>),
     NOT(Box<Prop>),
-    EQ(StateEval, StateEval),
+    EQ(Box<Prop>, Box<Prop>),
+    ID(Uuid),
     TRUE,
     FALSE,
-}
-
-#[derive(Debug, PartialEq)]
-pub enum StateEval {
-    ID(Uuid),
-    LIT(bool),
 }
